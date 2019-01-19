@@ -65,7 +65,6 @@ class RowsReader(object):
             dict_ = self.reader(row)
             for key, value in dict_.items():
                 result[self.format_.format(key=key, i=i)] = value
-        print(result.keys())
         return result
     
     
