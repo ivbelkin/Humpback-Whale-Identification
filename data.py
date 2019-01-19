@@ -55,7 +55,7 @@ def parse_infer_folder(infer_folder):
     
 class RowsReader(object):
     
-    def __init__(self, reader: [], format_: str = "{key}{i}"):
+    def __init__(self, reader: callable, format_: str = "{key}{i}"):
         self.reader = reader
         self.format_ = format_
         
