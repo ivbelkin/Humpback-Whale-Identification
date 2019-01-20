@@ -70,11 +70,10 @@ def parse_train_csv(train_csv, *, train_ext, folds_seed, n_folds, train_folds, v
             def process_small(df):
                 df = df.sample(frac=1)\
                        .reset_index(drop=True)
-                main_fold = 1 + np.random.randint(n_folds)
-                folds = list(1 + np.random.randint(n_folds, size=len(df) - 2))
+                fold = 1 + np.random.randint(n_folds)
                 return pd.DataFrame(dict(
                     Image=df["Image"],
-                    fold=[main_fold] * 2 + folds))
+                    fold=[fold] * len(df)))
             
             size = df["size"].iloc[0]
             n = len(df)
