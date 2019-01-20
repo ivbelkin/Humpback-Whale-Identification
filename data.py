@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import collections
 import cv2
+import random
 
 from pathlib import Path
 
@@ -160,19 +161,100 @@ class SiameseSampler(Sampler):
     Sample pairs with the same label and different equiprobably
     """
     
-    def __init__(self, first_labels, second_labels, mode="train"):
-        print("WARNING: dummy 'SiameseSampler'")
-        self.first_labels = first_labels
-        self.second_labels = second_labels
+    def __init__(
+        self, 
+        *,
+        mode: str = "train",
+        train_labels: [] = None, 
+        valid_labels: [] = None, 
+        infer_labels: [] = None, 
+    ):
+        """
+        :param: mode = "train", "valid", "infer"
+            "train": 
+                data = train_labels
+                train_labels x train_labels
+            "valid": 
+                data = train_labels + valid_labels
+                valid_labels x (train_labels + valid_labels)
+            "infer":
+                data = train_labels + infer_labels
+                infer_labels x (train_labels + infer_labels)
+        """
+
+        self.mode = mode
+        self.train_labels = train_labels
+        self.valid_labels = valid_labels
+        self.infer_labels = infer_labels
         
     def __iter__(self):
-        first_idx = np.arange(len(self.first_labels))
+        if self.mode in ["train"]:
+            return self._get_train_iter()
+        elif self.mode in ["valid"]:
+            return self._get_valid_iter()
+        elif self.mode in ["infer"]:
+            return self._get_infer_iter()
+        else:
+            raise Exception("Not supported")
+        
+        first_idx, second_idx = [], []
+        for i, label in enumerate(self.first_labels):
+            first_idx.append(i)
+            
+        if self.mode in ["train"]:
+            np.random.shuffle(first_idx)
+        
         second_idx = np.arange(len(self.second_labels))
         np.random.shuffle(second_idx)
         return iter(map(list, zip(first_idx, second_idx)))
     
     def __len__(self):
-        return len(self.first_labels)
+        if self.mode in ["train"]:
+            return len(self.train_labels)
+        elif self.mode in ["valid"]:
+            return len(self.valid_labels)
+        elif self.mode in ["infer"]:
+            return len(self.train_labels) * len(self.infer_labels)
+        else:
+            raise Exception("Not supported")
+            
+    def _get_train_iter(self):
+        idxs = []
+        label2idxs = self._label_to_idxs(self.train_labels)
+        all_idxs = set(range(len(self.train_labels)))
+        for i, label in enumerate(self.train_labels):
+            same = label2idxs[label].copy()
+            if np.random.randint(2):
+                same.remove(i)
+                j = random.choice(same)
+            else:
+                j = random.sample(all_idxs.difference(same), 1)[0]
+            idxs.append([i, j])
+        return iter(idxs)
+            
+    def _get_valid_iter(self):
+        train_size = len(self.train_labels)
+        valid_size = len(self.valid_labels)
+        idxs = [[train_size + i, np.random.randint(train_size + valid_size)] 
+                    for i in range(valid_size)]
+        return iter(idxs)
+    
+    def _get_infer_iter(self):
+        train_size = len(self.train_labels)
+        infer_size = len(self.infer_labels)
+        def infer_iter():
+            for i in range(train_size):
+                for j in range(infer_size):
+                    yield [i, train_size + j]
+        return infer_iter
+    
+    def _label_to_idxs(self, labels):
+        label2idxs = collections.defaultdict(lambda: [])
+        for idx, label in enumerate(labels):
+            label2idxs[label].append(idx)
+        for l, idxs in label2idxs.items():
+            assert len(idxs) > 1, l
+        return label2idxs
 
 
 class SiameseDataSource(AbstractDataSource):
@@ -218,7 +300,7 @@ class SiameseDataSource(AbstractDataSource):
         
         if len(train_list) > 0:
             train_labels = [x["Id"] for x in train_list]
-            sampler = SiameseSampler(train_labels, train_labels)
+            sampler = SiameseSampler(mode="train", train_labels=train_labels)
             train_loader = UtilsFactory.create_loader(
                 data_source=np.array(train_list),  # wrap in ndarray to enable indexing with list
                 open_fn=open_fn,
@@ -236,9 +318,9 @@ class SiameseDataSource(AbstractDataSource):
         
         if len(valid_list) > 0:
             valid_labels = [x["Id"] for x in valid_list]
-            sampler = SiameseSampler(valid_labels, train_labels)
+            sampler = SiameseSampler(mode="valid", train_labels=train_labels, valid_labels=valid_labels)
             valid_loader = UtilsFactory.create_loader(
-                data_source=np.array(valid_list + train_labels),  # wrap in ndarray to enable indexing with list
+                data_source=np.array(train_list + valid_list),  # wrap in ndarray to enable indexing with list
                 open_fn=open_fn,
                 dict_transform=SiameseDataSource.prepare_transforms(
                     mode="train", stage=stage),
