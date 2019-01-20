@@ -31,7 +31,7 @@ IMG_SIZE = 128
 
 AUG_INFER = Compose([
     Resize(IMG_SIZE, IMG_SIZE),
-    #Normalize(),
+    Normalize(),
 ])
 
 
@@ -158,14 +158,16 @@ class SiameseLabelMixin(object):
     Adds target 1 for samples with same id_key, 0 otherwise
     """
     
-    def __init__(self, dict_first_id_key, dict_second_id_key):
+    def __init__(self, dict_first_id_key, dict_second_id_key, output_key="targets"):
         self.dict_first_id_key = dict_first_id_key
         self.dict_second_id_key = dict_second_id_key
+        self.output_key = output_key
         
     def __call__(self, dict_):
-        result = dict(
-            target=int(dict_[self.dict_first_id_key] == dict_[self.dict_second_id_key])
-        )
+        result = {
+            self.output_key:
+                int(dict_[self.dict_first_id_key] == dict_[self.dict_second_id_key])
+        }
         return result
     
 
@@ -189,10 +191,10 @@ class SiameseSampler(Sampler):
                 train_labels x train_labels
             "valid": 
                 data = train_labels + valid_labels
-                valid_labels x (train_labels + valid_labels)
+                valid_labels x train_labels
             "infer":
                 data = train_labels + infer_labels
-                infer_labels x (train_labels + infer_labels)
+                infer_labels x train_labels
         """
 
         self.mode = mode
@@ -237,16 +239,16 @@ class SiameseSampler(Sampler):
     def _get_valid_iter(self):
         train_size = len(self.train_labels)
         valid_size = len(self.valid_labels)
-        idxs = [[train_size + i, np.random.randint(train_size + valid_size)] 
+        idxs = [[train_size + i, np.random.randint(train_size, train_size + valid_size)] 
                     for i in range(valid_size)]
         return iter(idxs)
     
     def _get_infer_iter(self):
         train_size = len(self.train_labels)
         def infer_iter():
-            for i in range(train_size):
-                for j in range(self.infer_size):
-                    yield [i, train_size + j]
+            for i in range(self.infer_size):
+                for j in range(train_size):
+                    yield [train_size + i, j]
         return infer_iter()
     
     def _label_to_idxs(self, labels):
@@ -356,7 +358,8 @@ class SiameseDataSource(AbstractDataSource):
             readers=[RowsReader(readers=[ReaderCompose(
                 readers=[
                     ImageReader(row_key="Image", dict_key="Image", datapath=train_folder),
-                    TextReader(row_key="Id", dict_key="Id")])],
+                    TextReader(row_key="Id", dict_key="Id"),
+                    TextReader(row_key="Image", dict_key="ImageFile")])],
                 format_="{key}{i}")],
             mixins=[SiameseLabelMixin(
                 dict_first_id_key="Id0", dict_second_id_key="Id1")]
