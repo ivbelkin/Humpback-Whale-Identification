@@ -3,6 +3,8 @@ import pandas as pd
 import collections
 import cv2
 
+from pathlib import Path
+
 from torch.utils.data.sampler import Sampler
 from torchvision import transforms
 
@@ -41,12 +43,81 @@ INFER_TRANSFORM_FN = [
 
 # ---- Data ----
 
-def parse_train_csv(train_csv, *, train_folder, train_ext, folds_seed, n_folds, train_folds, valid_folds):
-    print("WARNING: dummy 'parse_train_csv'")
+def parse_train_csv(train_csv, *, train_ext, folds_seed, n_folds, train_folds, valid_folds):
+    def change_ext(path: str, ext: str):
+        return str(Path(path).with_suffix(ext))
+    
+    def add_size_column(df):
+        size = df.groupby("Id")\
+                 .apply(lambda x: pd.Series({"size": len(x)}))\
+                 .reset_index()
+        return df.merge(size, how="left", on="Id")
+    
+    def filter_df(df):
+        return df.query("Id != 'new_whale' and size > 1")
+    
+    def add_fold_column(df, folds_seed, n_folds):
+        np.random.seed(folds_seed)
+        def process_same_size(df):
+            def process_large(df):
+                df = df.sample(frac=1)\
+                       .reset_index(drop=True)
+                return pd.DataFrame(dict(
+                    Image=df["Image"],
+                    fold=1 + np.arange(len(df)) % n_folds))
+            
+            def process_small(df):
+                df = df.sample(frac=1)\
+                       .reset_index(drop=True)
+                main_fold = 1 + np.random.randint(n_folds)
+                folds = list(1 + np.random.randint(n_folds, size=len(df) - 2))
+                return pd.DataFrame(dict(
+                    Image=df["Image"],
+                    fold=[main_fold] * 2 + folds))
+            
+            size = df["size"].iloc[0]
+            n = len(df)
+            if size / n_folds >= 2:
+                fold = df.groupby("Id")\
+                         .apply(process_large)\
+                         .reset_index(drop=True)
+            elif size >= 2 and n >= n_folds:
+                fold = df.groupby("Id")\
+                         .apply(process_small)\
+                         .reset_index(drop=True)
+            else:
+                print("Skip train ids:", ", ".format(set(df["Id"])))
+            return fold
+            
+        fold = df.groupby("size")\
+                 .apply(process_same_size)\
+                 .reset_index(drop=True)
+        return df.merge(fold, how="left", on="Image")
+    
+    def select_folds(df, folds):
+        return df.query("fold in {}".format(tuple(folds)))
+    
+    def split_by_fold(df, train_folds, valid_folds):
+        train_df = select_folds(df, train_folds)
+        valid_df = select_folds(df, valid_folds)
+        return train_df, valid_df
+    
     df = pd.read_csv(train_csv)
-    df = df.sample(frac=1, random_state=folds_seed).reset_index(drop=True)
-    list_ = parse_csv2list(df)
-    return list_[:-1000], list_[-1000:]
+    df["Image"] = df["Image"].map(lambda x: change_ext(x, train_ext))
+    df = add_size_column(df)
+    df_filtered = filter_df(df)
+    df_filtered = add_fold_column(df_filtered, folds_seed, n_folds)
+    train_df, valid_df = split_by_fold(df_filtered, train_folds, valid_folds)
+    
+    df = df.drop(["size"], axis=1)
+    train_df = train_df.drop(["size", "fold"], axis=1)
+    valid_df = valid_df.drop(["size", "fold"], axis=1)
+
+    df_list = parse_csv2list(df)
+    train_list = parse_csv2list(train_df)
+    valid_list = parse_csv2list(valid_df)
+    
+    return df_list, train_list, valid_list
     
     
 def parse_infer_folder(infer_folder):
@@ -127,9 +198,8 @@ class SiameseDataSource(AbstractDataSource):
     ):
         loaders = collections.OrderedDict()
         
-        train_list, valid_list = parse_train_csv(
-            train_csv, 
-            train_folder=train_folder,
+        all_list, train_list, valid_list = parse_train_csv(
+            train_csv,
             train_ext=train_ext,
             folds_seed=folds_seed, 
             n_folds=n_folds, 
@@ -168,7 +238,7 @@ class SiameseDataSource(AbstractDataSource):
             valid_labels = [x["Id"] for x in valid_list]
             sampler = SiameseSampler(valid_labels, train_labels)
             valid_loader = UtilsFactory.create_loader(
-                data_source=np.array(valid_list),  # wrap in ndarray to enable indexing with list
+                data_source=np.array(valid_list + train_labels),  # wrap in ndarray to enable indexing with list
                 open_fn=open_fn,
                 dict_transform=SiameseDataSource.prepare_transforms(
                     mode="train", stage=stage),
