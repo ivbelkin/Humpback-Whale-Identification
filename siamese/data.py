@@ -4,6 +4,7 @@ import collections
 import cv2
 import random
 import torch
+import os
 
 from pathlib import Path
 
@@ -129,22 +130,27 @@ def parse_train_csv(train_csv, *, train_ext, folds_seed, n_folds, train_folds, v
     
     
 def parse_infer_folder(infer_folder):
-    
-    
+    return [{"Image": path} for path in os.listdir(infer_folder)]
+
     
 class RowsReader(object):
     
-    def __init__(self, reader: callable, format_: str = "{key}{i}"):
-        self.reader = reader
+    def __init__(self, readers: [callable], format_: str = "{key}{i}"):
+        self.readers = readers
         self.format_ = format_
         
     def __call__(self, rows):
+        self._check_rows(rows)
+        readers = self.readers if len(self.readers) > 1 else self.readers * len(rows)
         result = {}
-        for i, row in enumerate(rows):
-            dict_ = self.reader(row)
+        for i, (row, reader) in enumerate(zip(rows, readers)):
+            dict_ = reader(row)
             for key, value in dict_.items():
                 result[self.format_.format(key=key, i=i)] = value
         return result
+    
+    def _check_rows(self, rows):
+        assert (len(self.readers) == 1) or (len(self.readers) == len(rows))
     
     
 class SiameseLabelMixin(object):
@@ -241,7 +247,7 @@ class SiameseSampler(Sampler):
             for i in range(train_size):
                 for j in range(self.infer_size):
                     yield [i, train_size + j]
-        return infer_iter
+        return infer_iter()
     
     def _label_to_idxs(self, labels):
         label2idxs = collections.defaultdict(lambda: [])
@@ -282,23 +288,13 @@ class SiameseDataSource(AbstractDataSource):
             n_folds=n_folds, 
             train_folds=train_folds, 
             valid_folds=valid_folds)
-        
-        open_fn = ReaderCompose(
-            readers=[RowsReader(reader=ReaderCompose(
-                readers=[
-                    ImageReader(row_key="Image", dict_key="Image", datapath=train_folder),
-                    TextReader(row_key="Id", dict_key="Id")]),
-                format_="{key}{i}")],
-            mixins=[SiameseLabelMixin(
-                dict_first_id_key="Id0", dict_second_id_key="Id1")]
-        )
-        
+                
         if len(train_list) > 0:
             train_labels = [x["Id"] for x in train_list]
             sampler = SiameseSampler(mode="train", train_labels=train_labels)
             train_loader = UtilsFactory.create_loader(
                 data_source=np.array(train_list),  # wrap in ndarray to enable indexing with list
-                open_fn=open_fn,
+                open_fn=SiameseDataSource._get_train_open_fn(train_folder),
                 dict_transform=SiameseDataSource.prepare_transforms(
                     mode="train", stage=stage),
                 dataset_cache_prob=-1,
@@ -313,12 +309,14 @@ class SiameseDataSource(AbstractDataSource):
         
         if len(valid_list) > 0:
             valid_labels = [x["Id"] for x in valid_list]
-            sampler = SiameseSampler(mode="valid", train_labels=train_labels, valid_labels=valid_labels)
+            sampler = SiameseSampler(mode="valid", 
+                                     train_labels=train_labels, 
+                                     valid_labels=valid_labels)
             valid_loader = UtilsFactory.create_loader(
                 data_source=np.array(train_list + valid_list),  # wrap in ndarray to enable indexing with list
-                open_fn=open_fn,
+                open_fn=SiameseDataSource._get_train_open_fn(train_folder),
                 dict_transform=SiameseDataSource.prepare_transforms(
-                    mode="train", stage=stage),
+                    mode="valid", stage=stage),
                 dataset_cache_prob=-1,
                 batch_size=batch_size,
                 workers=n_workers,
@@ -330,7 +328,45 @@ class SiameseDataSource(AbstractDataSource):
             loaders["valid"] = valid_loader
         
         if infer_folder is not None:
-            raise NotImplementedError()
+            infer_list = parse_infer_folder(infer_folder)
+            all_labels = [x["Id"] for x in all_list]
+            sampler = SiameseSampler(mode="infer", 
+                                     train_labels=all_labels,
+                                     infer_size=len(infer_list))
+            infer_loader = UtilsFactory.create_loader(
+                data_source=np.array(all_list + infer_list),
+                open_fn=SiameseDataSource._get_infer_open_fn(train_folder, infer_folder),
+                dict_transform=SiameseDataSource.prepare_transforms(
+                    mode="infer", stage=stage),
+                dataset_cache_prob=-1,
+                batch_size=batch_size,
+                workers=n_workers,
+                shuffle=False,
+                sampler=sampler,
+            )
+            print("Infer samples:", len(infer_loader) * batch_size)
+            print("Infer batches:", len(infer_loader))
+            loaders["infer"] = infer_loader
             
         return loaders
     
+    @staticmethod
+    def _get_train_open_fn(train_folder):
+        return ReaderCompose(
+            readers=[RowsReader(readers=[ReaderCompose(
+                readers=[
+                    ImageReader(row_key="Image", dict_key="Image", datapath=train_folder),
+                    TextReader(row_key="Id", dict_key="Id")])],
+                format_="{key}{i}")],
+            mixins=[SiameseLabelMixin(
+                dict_first_id_key="Id0", dict_second_id_key="Id1")]
+        )
+    
+    @staticmethod
+    def _get_infer_open_fn(train_folder, infer_folder):
+        return RowsReader(
+            readers=[
+                ImageReader(row_key="Image", dict_key="Image", datapath=train_folder),
+                ImageReader(row_key="Image", dict_key="Image", datapath=infer_folder)
+            ],
+            format_="{key}{i}")
