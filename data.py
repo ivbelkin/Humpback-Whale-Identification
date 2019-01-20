@@ -29,7 +29,7 @@ IMG_SIZE = 128
 
 AUG_INFER = Compose([
     Resize(IMG_SIZE, IMG_SIZE),
-    Normalize(),
+    #Normalize(),
 ])
 
 
@@ -38,8 +38,15 @@ INFER_TRANSFORM_FN = [
         dict_key="Image0",
         augment_fn=lambda x: AUG_INFER(image=x)["image"]),
     Augmentor(
+        dict_key="Image0",
+        augment_fn=lambda x: torch.tensor(x).permute(2, 0, 1)),
+    
+    Augmentor(
         dict_key="Image1",
-        augment_fn=lambda x: AUG_INFER(image=x)["image"])
+        augment_fn=lambda x: AUG_INFER(image=x)["image"]),
+    Augmentor(
+        dict_key="Image1",
+        augment_fn=lambda x: torch.tensor(x).permute(2, 0, 1)),
 ]
 
 # ---- Data ----
