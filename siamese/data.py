@@ -135,22 +135,35 @@ def parse_infer_folder(infer_folder):
     
 class RowsReader(object):
     
-    def __init__(self, readers: [callable], format_: str = "{key}{i}"):
+    def __init__(
+        self, 
+        reader: callable = None, 
+        readers: [callable] = None, 
+        format_: str = "{key}{i}"
+    ):
+        assert (reader is not None) or (readers is not None)
+        self.reader = reader
         self.readers = readers
         self.format_ = format_
         
     def __call__(self, rows):
         self._check_rows(rows)
-        readers = self.readers if len(self.readers) > 1 else self.readers * len(rows)
         result = {}
-        for i, (row, reader) in enumerate(zip(rows, readers)):
-            dict_ = reader(row)
-            for key, value in dict_.items():
-                result[self.format_.format(key=key, i=i)] = value
+        if self.readers is not None:
+            for i, (row, reader) in enumerate(zip(rows, readers)):
+                self._read(i, row, reader, result)
+        if self.reader is not None:
+            for i, row in enumerate(rows):
+                self._read(i, row, self.reader, result)
         return result
     
     def _check_rows(self, rows):
-        assert (len(self.readers) == 1) or (len(self.readers) == len(rows))
+        assert (self.readers is None) or (len(self.readers) == len(rows))
+        
+    def _read(self, i, row, reader, result):
+        dict_ = reader(row)
+        for key, value in dict_.items():
+            result[self.format_.format(key=key, i=i)] = value
     
     
 class SiameseLabelMixin(object):
@@ -239,7 +252,7 @@ class SiameseSampler(Sampler):
     def _get_valid_iter(self):
         train_size = len(self.train_labels)
         valid_size = len(self.valid_labels)
-        idxs = [[train_size + i, np.random.randint(train_size, train_size + valid_size)] 
+        idxs = [[train_size + i, np.random.randint(train_size)] 
                     for i in range(valid_size)]
         return iter(idxs)
     
@@ -355,11 +368,11 @@ class SiameseDataSource(AbstractDataSource):
     @staticmethod
     def _get_train_open_fn(train_folder):
         return ReaderCompose(
-            readers=[RowsReader(readers=[ReaderCompose(
+            readers=[RowsReader(reader=ReaderCompose(
                 readers=[
                     ImageReader(row_key="Image", dict_key="Image", datapath=train_folder),
                     TextReader(row_key="Id", dict_key="Id"),
-                    TextReader(row_key="Image", dict_key="ImageFile")])],
+                    TextReader(row_key="Image", dict_key="ImageFile")]),
                 format_="{key}{i}")],
             mixins=[SiameseLabelMixin(
                 dict_first_id_key="Id0", dict_second_id_key="Id1")]
@@ -368,8 +381,8 @@ class SiameseDataSource(AbstractDataSource):
     @staticmethod
     def _get_infer_open_fn(train_folder, infer_folder):
         return RowsReader(
+            reader=TextReader(row_key="Image", dict_key="ImageFile"),
             readers=[
                 ImageReader(row_key="Image", dict_key="Image", datapath=train_folder),
-                ImageReader(row_key="Image", dict_key="Image", datapath=infer_folder)
-            ],
+                ImageReader(row_key="Image", dict_key="Image", datapath=infer_folder)],
             format_="{key}{i}")
