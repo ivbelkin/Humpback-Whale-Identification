@@ -129,7 +129,7 @@ def parse_train_csv(train_csv, *, train_ext, folds_seed, n_folds, train_folds, v
     
     
 def parse_infer_folder(infer_folder):
-    raise NotImplementedError()
+    
     
     
 class RowsReader(object):
@@ -174,7 +174,7 @@ class SiameseSampler(Sampler):
         mode: str = "train",
         train_labels: [] = None, 
         valid_labels: [] = None, 
-        infer_labels: [] = None, 
+        infer_size: int = None, 
     ):
         """
         :param: mode = "train", "valid", "infer"
@@ -192,7 +192,7 @@ class SiameseSampler(Sampler):
         self.mode = mode
         self.train_labels = train_labels
         self.valid_labels = valid_labels
-        self.infer_labels = infer_labels
+        self.infer_size = infer_size
         
     def __iter__(self):
         if self.mode in ["train"]:
@@ -203,17 +203,6 @@ class SiameseSampler(Sampler):
             return self._get_infer_iter()
         else:
             raise Exception("Not supported")
-        
-        first_idx, second_idx = [], []
-        for i, label in enumerate(self.first_labels):
-            first_idx.append(i)
-            
-        if self.mode in ["train"]:
-            np.random.shuffle(first_idx)
-        
-        second_idx = np.arange(len(self.second_labels))
-        np.random.shuffle(second_idx)
-        return iter(map(list, zip(first_idx, second_idx)))
     
     def __len__(self):
         if self.mode in ["train"]:
@@ -221,7 +210,7 @@ class SiameseSampler(Sampler):
         elif self.mode in ["valid"]:
             return len(self.valid_labels)
         elif self.mode in ["infer"]:
-            return len(self.train_labels) * len(self.infer_labels)
+            return len(self.train_labels) * self.infer_size
         else:
             raise Exception("Not supported")
             
@@ -248,10 +237,9 @@ class SiameseSampler(Sampler):
     
     def _get_infer_iter(self):
         train_size = len(self.train_labels)
-        infer_size = len(self.infer_labels)
         def infer_iter():
             for i in range(train_size):
-                for j in range(infer_size):
+                for j in range(self.infer_size):
                     yield [i, train_size + j]
         return infer_iter
     
