@@ -6,6 +6,8 @@ import random
 import torch
 import os
 
+from typing import Dict, Callable
+
 from pathlib import Path
 
 from torch.utils.data.sampler import Sampler
@@ -166,12 +168,12 @@ class RowsReader(object):
     def __call__(self, rows):
         self._check_rows(rows)
         result = {}
-        suffixes = self.suffixes or range(len(rows))
+        suffixes = self.suffixes or list(range(len(rows)))
         if self.readers is not None:
-            for row, reader, suffix in zip(rows, readers, suffixes):
+            for row, reader, suffix in zip(rows, self.readers, suffixes):
                 self._read(row, reader, suffix, result)
         if self.reader is not None:
-            for row, suffix in enumerate(rows, suffixes):
+            for row, suffix in zip(rows, suffixes):
                 self._read(row, self.reader, suffix, result)
         return result
     
