@@ -29,6 +29,29 @@ cv2.ocl.setUseOpenCL(False)
 IMG_SIZE = 128
 
 
+class AugmentorMany:
+    """
+    Augmentation abstraction to use with data dictionaries.
+    """
+
+    def __init__(
+        self, dict_keys: [str], augment_fn: Callable, default_kwargs: Dict = None
+    ):
+        """
+        :param dict_keys: keys to transform
+        :param augment_fn: augmentation function to use
+        :param default_kwargs: default kwargs for augmentations function
+        """
+        self.dict_keys = dict_keys
+        self.augment_fn = augment_fn
+        self.default_kwargs = default_kwargs or {}
+
+    def __call__(self, dict_):
+        for key in self.dict_keys:
+            dict_[key] = self.augment_fn(dict_[key], **self.default_kwargs)
+        return dict_
+
+
 AUG_INFER = Compose([
     Resize(IMG_SIZE, IMG_SIZE),
     Normalize(),
@@ -36,18 +59,11 @@ AUG_INFER = Compose([
 
 
 INFER_TRANSFORM_FN = [
-    Augmentor(
-        dict_key="Image0",
+    AugmentorMany(
+        dict_keys=["Image0", "Image1"],
         augment_fn=lambda x: AUG_INFER(image=x)["image"]),
-    Augmentor(
-        dict_key="Image0",
-        augment_fn=lambda x: torch.tensor(x).permute(2, 0, 1)),
-    
-    Augmentor(
-        dict_key="Image1",
-        augment_fn=lambda x: AUG_INFER(image=x)["image"]),
-    Augmentor(
-        dict_key="Image1",
+    AugmentorMany(
+        dict_keys=["Image0", "Image1"],
         augment_fn=lambda x: torch.tensor(x).permute(2, 0, 1)),
 ]
 
@@ -139,31 +155,34 @@ class RowsReader(object):
         self, 
         reader: callable = None, 
         readers: [callable] = None, 
-        format_: str = "{key}{i}"
+        suffixes: [str] = None,
     ):
         assert (reader is not None) or (readers is not None)
+        
         self.reader = reader
         self.readers = readers
-        self.format_ = format_
+        self.suffixes = suffixes
         
     def __call__(self, rows):
         self._check_rows(rows)
         result = {}
+        suffixes = self.suffixes or range(len(rows))
         if self.readers is not None:
-            for i, (row, reader) in enumerate(zip(rows, readers)):
-                self._read(i, row, reader, result)
+            for row, reader, suffix in zip(rows, readers, suffixes):
+                self._read(row, reader, suffix, result)
         if self.reader is not None:
-            for i, row in enumerate(rows):
-                self._read(i, row, self.reader, result)
+            for row, suffix in enumerate(rows, suffixes):
+                self._read(row, self.reader, suffix, result)
         return result
     
     def _check_rows(self, rows):
         assert (self.readers is None) or (len(self.readers) == len(rows))
+        assert (self.suffixes is None) or (len(self.suffixes == len(rows)))
         
-    def _read(self, i, row, reader, result):
+    def _read(self, row, reader, suffix, result):
         dict_ = reader(row)
         for key, value in dict_.items():
-            result[self.format_.format(key=key, i=i)] = value
+            result[key + str(suffix)] = value
     
     
 class SiameseLabelMixin(object):
@@ -372,8 +391,7 @@ class SiameseDataSource(AbstractDataSource):
                 readers=[
                     ImageReader(row_key="Image", dict_key="Image", datapath=train_folder),
                     TextReader(row_key="Id", dict_key="Id"),
-                    TextReader(row_key="Image", dict_key="ImageFile")]),
-                format_="{key}{i}")],
+                    TextReader(row_key="Image", dict_key="ImageFile")]))],
             mixins=[SiameseLabelMixin(
                 dict_first_id_key="Id0", dict_second_id_key="Id1")]
         )
@@ -384,5 +402,4 @@ class SiameseDataSource(AbstractDataSource):
             reader=TextReader(row_key="Image", dict_key="ImageFile"),
             readers=[
                 ImageReader(row_key="Image", dict_key="Image", datapath=train_folder),
-                ImageReader(row_key="Image", dict_key="Image", datapath=infer_folder)],
-            format_="{key}{i}")
+                ImageReader(row_key="Image", dict_key="Image", datapath=infer_folder)])
