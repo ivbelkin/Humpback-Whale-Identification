@@ -68,71 +68,101 @@ class LossCallback(Callback):
         
 @Registry.callback
 class PairScoresCallback(Callback):
-    
-    def __init__(self, *, loader_mode, **kwargs):
-        super().__init__(**kwargs)
-        self.loader_mode = loader_mode
-        
+            
     def on_loader_start(self, state):
         # just reserve matrix, if doesnt exist
-        if self.loader_mode not in state.pair_scores:
-            loader_params = state.loader_params[self.loader_mode]
-            state.pair_scores[self.loader_mode] = np.zeros((
+        if state.loader_mode not in state.pair_scores:
+            loader_params = state.loader_params[state.loader_mode]
+            state.pair_scores[state.loader_mode] = np.zeros((
                 len(loader_params["first_file2table"]),
                 len(loader_params["second_file2table"])
             ))
-            state.pair_labels[self.loader_mode] = -1 * np.ones((
+            state.pair_labels[state.loader_mode] = -1 * np.ones((
                 len(loader_params["first_file2table"]),
                 len(loader_params["second_file2table"])
             ))
-            
     
     def on_batch_end(self, state):
-        if state.loader_mode == self.loader_mode:
-            loader_params = state.loader_params[self.loader_mode]
-            file0 = state.input["ImageFile0"]
-            file1 = state.input["ImageFile1"]
-            logits = state.output["logits"]
-            targets = state.input["targets"]
-            for f0, f1, logit, target in zip(file0, file1, logits, targets):
-                i = loader_params["first_file2table"][f0]
-                j = loader_params["second_file2table"][f1]
-                state.pair_scores[self.loader_mode][i, j] = logit.item()
-                state.pair_labels[self.loader_mode][i, j] = target.item()
+        loader_params = state.loader_params[state.loader_mode]
+        file0 = state.input["ImageFile0"]
+        file1 = state.input["ImageFile1"]
+        logits = state.output["logits"]
+        targets = state.input["targets"]
+        for f0, f1, logit, target in zip(file0, file1, logits, targets):
+            i = loader_params["first_file2table"][f0]
+            j = loader_params["second_file2table"][f1]
+            state.pair_scores[state.loader_mode][i, j] = logit.item()
+            state.pair_labels[state.loader_mode][i, j] = target.item()
             
             
 @Registry.callback
 class FillingCallback(Callback):
-    
-    def __init__(self, *, loader_mode, **kwargs):
-        super().__init__(**kwargs)
-        self.loader_mode = loader_mode
-    
+        
     def on_batch_end(self, state):
-        state.batch_metrics[self.loader_mode + "_filling"] = 0
-        if state.loader_mode == self.loader_mode:
-            value = (state.pair_scores[self.loader_mode] != 0).mean()
-            state.batch_metrics[self.loader_mode + "_filling"] = value
+        value = (state.pair_labels[state.loader_mode] > -0.5).mean()
+        state.batch_metrics["filling"] = value
             
             
 @Registry.callback
 class F1Callback(Callback):
-    
-    def __init__(self, *, loader_mode, **kwargs):
-        super().__init__(**kwargs)
-        self.loader_mode = loader_mode
         
     def on_batch_end(self, state):
-        state.batch_metrics[self.loader_mode + "_f1"] = 0
-        if state.loader_mode == self.loader_mode:
-            y_true = state.pair_labels[state.loader_mode][state.pair_labels[state.loader_mode] > -0.5].flatten().astype(int)
-            y_pred = (state.pair_scores[state.loader_mode][state.pair_labels[state.loader_mode] > -0.5].flatten() > 0).astype(int)
-            value = metrics.f1_score(y_true, y_pred)
-            state.batch_metrics[self.loader_mode + "_f1"] = value
+        lm = state.loader_mode
+        idx = state.pair_labels[lm] > -0.5
+        y_true = state.pair_labels[lm][idx].flatten().astype(int)
+        y_pred = (state.pair_scores[lm][idx].flatten() > 0).astype(int)
+        value = metrics.f1_score(y_true, y_pred)
+        state.batch_metrics["f1_score"] = value
+
+
+@Registry.callback
+class PrecisionCallback(Callback):
+    
+    def on_batch_end(self, state):
+        lm = state.loader_mode
+        idx = state.pair_labels[lm] > -0.5
+        y_true = state.pair_labels[lm][idx].flatten().astype(int)
+        y_pred = (state.pair_scores[lm][idx].flatten() > 0).astype(int)
+        value = metrics.precision_score(y_true, y_pred)
+        state.batch_metrics["precision_score"] = value
+        
+        
+@Registry.callback
+class RecallCallback(Callback):
+    
+    def on_batch_end(self, state):
+        lm = state.loader_mode
+        idx = state.pair_labels[lm] > -0.5
+        y_true = state.pair_labels[lm][idx].flatten().astype(int)
+        y_pred = (state.pair_scores[lm][idx].flatten() > 0).astype(int)
+        value = metrics.recall_score(y_true, y_pred)
+        state.batch_metrics["recall_score"] = value
+        
+        
+@Registry.callback
+class AccuracyCallback(Callback):
+    
+    def on_batch_end(self, state):
+        lm = state.loader_mode
+        idx = state.pair_labels[lm] > -0.5
+        y_true = state.pair_labels[lm][idx].flatten().astype(int)
+        y_pred = (state.pair_scores[lm][idx].flatten() > 0).astype(int)
+        value = metrics.accuracy_score(y_true, y_pred)
+        state.batch_metrics["accuracy_score"] = value
 
 # ---- Runner ----
 
 class ModelRunner(AbstractModelRunner):
+    
+    def _init(self):
+        """
+        Inner method for children's classes for model specific initialization.
+        As baseline, checks device support and puts model on it.
+        :return:
+        """
+        super()._init()
+        for p in self.model.enc.parameters():
+            p.requires_grad = False
     
     def _init_state(
         self, *, mode: str, stage: str = None, **kwargs
@@ -146,7 +176,7 @@ class ModelRunner(AbstractModelRunner):
         if self.state is not None:
             # prevent running with another loader but with the same loader_mode
             for loader_mode, loader_params in self.state.loader_params.items():
-                assert loader_params["id"] == kwargs["loader_params"]["loader_mode"]["id"]
+                assert loader_params["id"] == kwargs["loader_params"][loader_mode]["id"]
             additional_kwargs = {
                 "step": self.state.step,
                 "epoch": self.state.epoch + 1,
@@ -196,6 +226,7 @@ class ModelRunner(AbstractModelRunner):
         
         state_params = state_params or {}
         # add mapping from image filename to index in pair_scores table
+        state_params["loader_params"] = {}
         for loader_mode, loader in loaders.items():
             sampler = loader.sampler
             data = loader.dataset.data
@@ -205,7 +236,7 @@ class ModelRunner(AbstractModelRunner):
                 data[idx]["Image"]: i for i, idx in enumerate(sampler.first_idxs)}
             loader_params["second_file2table"] = {
                 data[idx]["Image"]: i for i, idx in enumerate(sampler.second_idxs)}
-            state_params["loader_params"] = {loader_mode: loader_params}
+            state_params["loader_params"][loader_mode] = loader_params
         
         super().run(
             loaders=loaders, 
