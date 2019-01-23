@@ -238,6 +238,10 @@ class SiameseSampler(Sampler):
         """
         self._check_args(mode, first_idxs, first_labels, second_idxs, second_labels)
         
+        if first_labels is not None and second_labels is not None:
+            first_idxs, first_labels, second_idxs, second_labels = \
+                self._prepare_data(first_idxs, first_labels, second_idxs, second_labels)
+        
         self.mode = mode
         self.first_idxs = first_idxs
         self.first_labels = first_labels
@@ -311,6 +315,20 @@ class SiameseSampler(Sampler):
         for i, label in zip(idxs, labels):
             label2idxs[label].add(i)
         return label2idxs
+    
+    def _prepare_data(self, first_idxs, first_labels, second_idxs, second_labels):
+        common = set(first_labels).intersection(second_labels)
+        first_idxs_, first_labels_ = self._filter(first_idxs, first_labels, common)
+        second_idxs_, second_labels_ = self._filter(second_idxs, second_labels, common)
+        return first_idxs_, first_labels_, second_idxs_, second_labels_
+        
+    def _filter(self, idxs, labels, common):
+        idxs_, labels_ = [], []
+        for idx, label in zip(idxs, labels):
+            if label in common:
+                idxs_.append(idx)
+                labels_.append(label)
+        return idxs_, labels_
 
 
 class SiameseDataSource(AbstractDataSource):
