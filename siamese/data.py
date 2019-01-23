@@ -362,16 +362,19 @@ class SiameseDataSource(AbstractDataSource):
             train_folds=train_folds, 
             valid_folds=valid_folds)
                 
+        # train on train-train samples
         if len(train_list) > 0:
+            train_len = len(train_list)
             train_labels = [x["Id"] for x in train_list]
+            train_idxs = list(range(train_len))
             sampler = SiameseSampler(
                 mode="train", 
-                first_idxs=list(range(len(train_list))),
+                first_idxs=train_idxs,
                 first_labels=train_labels,
-                second_idxs=list(range(len(train_list))),
+                second_idxs=train_idxs,
                 second_labels=train_labels
             )
-            train_loader = UtilsFactory.create_loader(
+            loader = UtilsFactory.create_loader(
                 data_source=np.array(train_list),  # wrap in ndarray to enable indexing with list
                 open_fn=SiameseDataSource._get_train_open_fn(train_folder),
                 dict_transform=SiameseDataSource.prepare_transforms(
@@ -382,9 +385,9 @@ class SiameseDataSource(AbstractDataSource):
                 shuffle=False,
                 sampler=sampler,
             )
-            print("Train samples:", len(train_loader) * batch_size)
-            print("Train batches:", len(train_loader))
-            loaders["train"] = train_loader
+            print("train-train samples:", len(loader) * batch_size)
+            print("train-train batches:", len(loader))
+            loaders["train-train"] = loader
         
         if len(valid_list) > 0:
             valid_labels = [x["Id"] for x in valid_list]
