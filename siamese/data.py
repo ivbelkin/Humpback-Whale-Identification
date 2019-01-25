@@ -21,7 +21,11 @@ from catalyst.data.reader import (
 from catalyst.legacy.utils.parse import parse_csv2list
 
 from albumentations import (
-    Resize, Compose, Normalize)
+    HorizontalFlip, IAAPerspective, ShiftScaleRotate, CLAHE, RandomRotate90,
+    Transpose, ShiftScaleRotate, Blur, OpticalDistortion, GridDistortion, HueSaturationValue,
+    IAAAdditiveGaussianNoise, GaussNoise, MotionBlur, MedianBlur, IAAPiecewiseAffine,
+    IAASharpen, IAAEmboss, RandomBrightnessContrast, Flip, OneOf, Compose, Resize, Normalize
+)
 
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
@@ -54,11 +58,33 @@ class AugmentorMany:
         return dict_
 
 
+def strong_aug(p=0.5):
+    return Compose([
+        Resize(IMG_SIZE, IMG_SIZE),
+        HorizontalFlip(),
+        OneOf([
+            IAAPerspective(),
+            ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.05, rotate_limit=0, p=0.2),
+        ]),
+        #RandomBrightnessContrast(),
+        Normalize(),
+    ])
+
+
+AUG_TRAIN = strong_aug(p=0.5)
 AUG_INFER = Compose([
     Resize(IMG_SIZE, IMG_SIZE),
     Normalize(),
 ])
 
+TRAIN_TRANSFORM_FN = [
+    AugmentorMany(
+        dict_keys=["Image0", "Image1"],
+        augment_fn=lambda x: AUG_TRAIN(image=x)["image"]),
+    AugmentorMany(
+        dict_keys=["Image0", "Image1"],
+        augment_fn=lambda x: torch.tensor(x).permute(2, 0, 1)),
+]
 
 INFER_TRANSFORM_FN = [
     AugmentorMany(
@@ -330,8 +356,10 @@ class SiameseDataSource(AbstractDataSource):
     
     @staticmethod
     def prepare_transforms(*, mode, stage, **kwargs):
-        print("WARNING: dummy 'SiameseDataSource.prepare_transforms'")
-        return transforms.Compose(INFER_TRANSFORM_FN)
+        if mode == "train":
+            return transforms.Compose(TRAIN_TRANSFORM_FN)
+        elif mode == "valid":
+            return transforms.Compose(INFER_TRANSFORM_FN)
     
     @staticmethod
     def prepare_loaders(
