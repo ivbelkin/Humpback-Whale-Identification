@@ -11,7 +11,7 @@ from collections import OrderedDict
 
 from catalyst.contrib.registry import Registry
 from catalyst.contrib.models import ResnetEncoder
-from catalyst.dl.runner import AbstractModelRunner
+from catalyst.dl.runner import BaseModelRunner
 from catalyst.dl.callbacks import Callback
 from catalyst.dl.state import RunnerState
 
@@ -67,7 +67,18 @@ class LossCallback(Callback):
 
 # ---- Runner ----
 
-class ModelRunner(AbstractModelRunner):
+class ModelRunner(BaseModelRunner):
+    
+    @staticmethod
+    def prepare_stage_model(*, model, stage, **kwargs):
+        if stage == "train_head":
+            for p in model.head.parameters():
+                p.requires_grad = True
+            for p in model.enc.parameters():
+                p.requires_grad = False
+        elif stage == "finetune":
+            for p in model.parameters():
+                p.requires_grad = True
     
     @staticmethod
     def _batch_handler(*, dct: Dict, model: nn.Module) -> Dict:
