@@ -69,16 +69,6 @@ class LossCallback(Callback):
 
 class ModelRunner(AbstractModelRunner):
     
-    def _init(self):
-        """
-        Inner method for children's classes for model specific initialization.
-        As baseline, checks device support and puts model on it.
-        :return:
-        """
-        super()._init()
-        for p in self.model.enc.parameters():
-            p.requires_grad = False
-    
     @staticmethod
     def _batch_handler(*, dct: Dict, model: nn.Module) -> Dict:
         """
